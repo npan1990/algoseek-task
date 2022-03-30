@@ -24,7 +24,7 @@ docker build -t algoseek .
 ```
 2. Run the algoseek container
 ```bash
-docker run -t -d --name algoseek_container .
+docker run -t -d --name algoseek_container algoseek
 ```
 3. Attach to the Docker container
 ```bash
