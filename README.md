@@ -26,6 +26,10 @@ docker build -t algoseek .
 ```bash
 docker run -t -d --name algoseek_container algoseek
 ```
+Note: If you want to mount the results folder:
+```bash
+docker run -t -d -v results:/app/results/ --name algoseek_container algoseek
+```
 3. Attach to the Docker container
 ```bash
 docker exec -it algoseek_container /bin/bash
