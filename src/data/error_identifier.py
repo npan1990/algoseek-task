@@ -1,5 +1,7 @@
 import json
+from queue import Empty
 from typing import Tuple, Dict
+from multiprocessing import Queue
 
 import pandas as pd
 from loguru import logger
@@ -11,24 +13,33 @@ from src.data import DataManipulator
 
 class ErrorIdentifier(DataManipulator):
 
-    def __init__(self, year: str = None):
+    def __init__(self, year: str = None, export: bool = True,
+                 tasks_queue: Queue = None, indices_queue: Queue = None, secid_queue: Queue = None):
         """
 
         Args:
             year(str): The year to fix. If None all years are fixed. Default is None.
+            export(bool): Flag about exporting the problematic indices to a JSON file.
+            tasks_queue (Queue): The shared tasks queue. If None single process behaviour is followed.
+             Default is None.
+            indices_queue (Queue): The shared indices queue. If None single process behaviour is followed.
+             Default is None.
+            secid_queue (Queue): The shared secid queue. If None single process behaviour is followed. Default is None.
         """
 
-        super().__init__(year)
+        super().__init__(year, tasks_queue, indices_queue, secid_queue)
+
+        self.export = export
 
         self.problematic_indices = {}
         self.problematic_sec_ids = []
 
-    def identify_errors(self, export: bool = True):
+    def identify_errors(self):
         """
         Identify the problematic indices in the considered files.
 
         Args:
-            export(bool): Flag about exporting the problematic indices to a JSON file.
+
 
         Returns:
 
@@ -38,7 +49,7 @@ class ErrorIdentifier(DataManipulator):
             to_remove_indices, sec_ids_errors = self._identify_filename_errors(filename)
             self.problematic_indices[filename] = list(to_remove_indices)
             self.problematic_sec_ids.append(sec_ids_errors)
-        if export:
+        if self.export:
             json.dump({str(k): v for d in self.problematic_sec_ids for k, v in d.items()}, open(
                 f'{results_dir}problematic_sec_ids.json', 'w'))
             json.dump(self.problematic_indices, open(f'{results_dir}problematic_indices.json', 'w'))
@@ -75,7 +86,7 @@ class ErrorIdentifier(DataManipulator):
         # 3) and 4) Identify problematic rows as rows not present on daily mapper or with problematic SedId
 
         # Out of range sec_ids
-        out_of_range_sec_ids = set(daily_data[~daily_data.Ticker.isin(daily_mapper)]['SecId'].unique().flatten())
+        out_of_range_sec_ids = daily_data[~daily_data.Ticker.isin(daily_mapper)]['SecId'].astype(int).unique().tolist()
 
         daily_data = daily_data[daily_data.Ticker.isin(daily_mapper)]
         daily_data['IsValid'] = daily_data.apply(
@@ -90,3 +101,29 @@ class ErrorIdentifier(DataManipulator):
         }}
 
         return daily_data[daily_data['IsValid'] == False].index, sec_ids_errors
+
+    def run(self) -> None:
+        """
+        Process behaviour if multiple workers are used.
+        Warning this increased the memory required.
+
+        Returns:
+            None
+        """
+        logger.info('Starting new process.')
+        while True:
+            try:
+                filename = self.tasks_queue.get(timeout=1)
+                # Process the filename
+                to_remove_indices, sec_ids_errors = self._identify_filename_errors(filename)
+                self.problematic_indices[filename] = list(to_remove_indices)
+                self.problematic_sec_ids.append(sec_ids_errors)
+                self.considered_files.append(filename)
+            except Empty as e:
+                logger.info('Process completed.')
+                if self.export:
+                    # Copy the results to the indices, sec_id queue
+                    self.indices_queue.put(self.problematic_indices)
+                    self.secid_queue.put({str(k): v for d in self.problematic_sec_ids for k, v in d.items()})
+                break
+        logger.info('Process exit.')

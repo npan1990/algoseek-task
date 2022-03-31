@@ -1,4 +1,5 @@
 import os
+from multiprocessing import Queue
 
 import pandas as pd
 from loguru import logger
@@ -10,15 +11,21 @@ from src.data.error_identifier import ErrorIdentifier
 
 class ErrorFixer(ErrorIdentifier):
 
-    def __init__(self, year: str = None):
+    def __init__(self, year: str = None,
+                 tasks_queue: Queue = None, indices_queue: Queue = None, secid_queue: Queue = None):
         """
         Creates an ErrorFixed object.
 
         Args:
             year(str): The year to fix. If None all years are fixed. Default is None.
+            tasks_queue (Queue): The shared tasks queue. If None single process behaviour is followed.
+             Default is None.
+            indices_queue (Queue): The shared indices queue. If None single process behaviour is followed.
+             Default is None.
+            secid_queue (Queue): The shared secid queue. If None single process behaviour is followed. Default is None.
         """
 
-        super().__init__(year)
+        super().__init__(year, False, tasks_queue, indices_queue, secid_queue)
 
         # Create results directories
         for filename in self.considered_files:
@@ -65,3 +72,22 @@ class ErrorFixer(ErrorIdentifier):
         # Load data. Second loading into memory since we can not afford to keep all data in memory.
         daily_data = pd.read_csv(filename)
         return daily_data[~daily_data.index.isin(self.problematic_indices[filename])]
+
+    def run(self) -> None:
+        """
+        Process behaviour for fixer.
+
+        Returns:
+            None
+        """
+
+        # Identify errors
+        logger.info('Identifying errors.')
+        super().run()
+
+        # Fix all errors
+        logger.info('Writing all files.')
+        for filename in self.considered_files:
+            updated_daily = self._fix_filename(filename)
+            filename.replace(input_dir, results_dir)
+            updated_daily.to_csv(filename.replace(input_dir, results_dir), index=False)
