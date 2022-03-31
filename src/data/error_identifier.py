@@ -1,4 +1,5 @@
 import json
+from typing import Tuple, Dict
 
 import pandas as pd
 from loguru import logger
@@ -20,6 +21,7 @@ class ErrorIdentifier(DataManipulator):
         super().__init__(year)
 
         self.problematic_indices = {}
+        self.problematic_sec_ids = []
 
     def identify_errors(self, export: bool = True):
         """
@@ -33,13 +35,15 @@ class ErrorIdentifier(DataManipulator):
         """
         logger.info('Identifying errors.')
         for filename in tqdm(self.considered_files):
-            to_remove_indices = self._identify_filename_errors(filename)
+            to_remove_indices, sec_ids_errors = self._identify_filename_errors(filename)
             self.problematic_indices[filename] = list(to_remove_indices)
-
+            self.problematic_sec_ids.append(sec_ids_errors)
         if export:
+            json.dump({str(k): v for d in self.problematic_sec_ids for k, v in d.items()}, open(
+                f'{results_dir}problematic_sec_ids.json', 'w'))
             json.dump(self.problematic_indices, open(f'{results_dir}problematic_indices.json', 'w'))
 
-    def _identify_filename_errors(self, filename: str) -> pd.core.indexes.numeric.Int64Index:
+    def _identify_filename_errors(self, filename: str) -> Tuple[pd.core.indexes.numeric.Int64Index, Dict]:
         """
         Fixes the filename provides. The general idea is the following:
             1) Load the  data.
@@ -69,8 +73,20 @@ class ErrorIdentifier(DataManipulator):
         daily_mapper = dict(zip(daily_ticker_df.Ticker, daily_ticker_df.SecId))
 
         # 3) and 4) Identify problematic rows as rows not present on daily mapper or with problematic SedId
+
+        # Out of range sec_ids
+        out_of_range_sec_ids = set(daily_data[~daily_data.Ticker.isin(daily_mapper)]['SecId'].unique().flatten())
+
         daily_data = daily_data[daily_data.Ticker.isin(daily_mapper)]
         daily_data['IsValid'] = daily_data.apply(
             lambda row: True if row.Ticker in daily_mapper and daily_mapper[row.Ticker] == row.SecId else False, axis=1)
 
-        return daily_data[daily_data['IsValid'] == False].index
+        # Invalid sec_ids
+        invalid_sec_ids = daily_data[daily_data['IsValid'] == False]['SecId'].unique().tolist()
+
+        sec_ids_errors = {daily_data.TradeDate.iloc[0]: {
+            'invalid': invalid_sec_ids,
+            'out_of_range': out_of_range_sec_ids
+        }}
+
+        return daily_data[daily_data['IsValid'] == False].index, sec_ids_errors
